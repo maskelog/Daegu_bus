@@ -1,7 +1,13 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
-  /* config options here */
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'https://apis.data.go.kr/6270000/dbmsapi01/:path*'
+      }
+    ];
+  }
 };
 
-export default nextConfig;
+module.exports = nextConfig;
