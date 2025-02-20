@@ -1,13 +1,8 @@
 "use client";
 
-import DigitalSign from "./DigitalSign";
 import { DaeguBusAPI } from "@/api/DaeguBusAPI";
 import { Stop } from "@/types";
 import React, { useState, useEffect, useCallback } from "react";
-
-interface ArrivalInfoProps {
-  stop: Stop | null;
-}
 
 // 도착 정보 캐시 - API 호출 최소화
 interface CacheItem {
@@ -23,11 +18,16 @@ const ALL_ROUTES_CACHE_TTL = 120 * 1000;
 // 정적 캐시 객체 - 컴포넌트 간에 공유됨
 const arrivalCache: Record<string, CacheItem> = {};
 
+interface ArrivalInfoProps {
+  stop: Stop | null;
+}
+
 const ArrivalInfo: React.FC<ArrivalInfoProps> = ({ stop }) => {
-  const [arrivalText, setArrivalText] =
-    useState("실시간 도착 정보가 없습니다.");
+  const [arrivalInfo, setArrivalInfo] = useState<
+    Array<{ number: string; arrival: string; location: string }>
+  >([]);
   const [loading, setLoading] = useState(false);
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<string>("");
 
   // 도착 정보 갱신 함수
   const refreshArrivalInfo = useCallback(async () => {
@@ -47,8 +47,18 @@ const ArrivalInfo: React.FC<ArrivalInfoProps> = ({ stop }) => {
       ) {
         // 캐시된 전체 도착 정보 사용
         console.log("전체 도착 정보 캐시 사용:", allRoutesKey);
-        setArrivalText(cachedAllArrivals.data);
-        setLastRefreshed(new Date(cachedAllArrivals.timestamp));
+        setArrivalInfo(cachedAllArrivals.data);
+        const updateTime = new Date(cachedAllArrivals.timestamp);
+        setLastUpdate(
+          `${updateTime.getFullYear()}-${String(
+            updateTime.getMonth() + 1
+          ).padStart(2, "0")}-${String(updateTime.getDate()).padStart(
+            2,
+            "0"
+          )} ${String(updateTime.getHours()).padStart(2, "0")}:${String(
+            updateTime.getMinutes()
+          ).padStart(2, "0")}`
+        );
         setLoading(false);
         return;
       }
@@ -83,7 +93,7 @@ const ArrivalInfo: React.FC<ArrivalInfoProps> = ({ stop }) => {
         !routeListData.response.body.items.item
       ) {
         console.error("정류소별 경유 노선 정보 누락:", routeListData);
-        setArrivalText("정류소별 경유 노선 정보가 없습니다.");
+        setArrivalInfo([]);
         setLoading(false);
         return;
       }
@@ -97,7 +107,7 @@ const ArrivalInfo: React.FC<ArrivalInfoProps> = ({ stop }) => {
       const routeNos: string[] = items.map((item: any) => String(item.routeno));
 
       if (routeNos.length === 0) {
-        setArrivalText("해당 정류장을 지나는 버스 노선이 없습니다.");
+        setArrivalInfo([]);
         setLoading(false);
         return;
       }
@@ -151,59 +161,59 @@ const ArrivalInfo: React.FC<ArrivalInfoProps> = ({ stop }) => {
       }
 
       // 3. 각 응답에서 도착 예정 정보를 추출
-      const arrivalStrings = allResults.map(({ data, routeNo }) => {
-        if (!data || !data.header || !data.header.success) {
-          return `${routeNo}: 도착 예정 정보 없음`;
-        }
+      const formattedArrivals = allResults
+        .filter(({ data }) => data && data.header && data.header.success)
+        .flatMap(({ data, routeNo }) => {
+          const items = data.body?.items;
+          if (!items || items.length === 0) return [];
 
-        const items = data.body?.items;
-        if (!items || items.length === 0) {
-          return `${routeNo}: 도착 예정 정보 없음`;
-        }
+          // 해당 노선 찾기
+          const routeItem =
+            items.find((item: any) => item.routeNo === routeNo) || items[0];
 
-        // 해당 노선 찾기
-        const routeItem =
-          items.find((item: any) => item.routeNo === routeNo) || items[0];
+          // arrList 처리
+          let arrData = routeItem.arrList;
+          if (!arrData) return [];
 
-        // arrList 처리
-        let arrData = routeItem.arrList;
-        if (!arrData) {
-          return `${routeNo}: 도착 예정 정보 없음`;
-        }
+          if (!Array.isArray(arrData)) {
+            arrData = [arrData];
+          }
 
-        if (!Array.isArray(arrData)) {
-          arrData = [arrData];
-        }
+          return arrData.map((item: any) => ({
+            number: routeNo,
+            arrival: item.arrState,
+            location: `${item.bsGap}정거장 전`,
+          }));
+        })
+        .sort((a, b) => {
+          // 도착 시간 기준 정렬 (숫자만 추출)
+          const aTime = parseInt(a.arrival.replace(/[^0-9]/g, "") || "999");
+          const bTime = parseInt(b.arrival.replace(/[^0-9]/g, "") || "999");
+          return aTime - bTime;
+        });
 
-        const info = arrData
-          .map((item: any) => `${item.bsNm} (${item.arrState})`)
-          .join(" | ");
-        return `${routeNo}: ${info || "도착 예정 정보 없음"}`;
-      });
-
-      const validArrivalStrings = arrivalStrings.filter(
-        (s) => !s.endsWith("도착 예정 정보 없음")
-      );
-
-      let resultText;
-      if (validArrivalStrings.length > 0) {
-        resultText = validArrivalStrings.join("    ");
-      } else {
-        resultText = "현재 도착 예정인 버스가 없습니다.";
-      }
-
-      // 결과 텍스트 설정 및 캐싱
-      setArrivalText(resultText);
+      // 결과 설정 및 캐싱
+      setArrivalInfo(formattedArrivals);
       arrivalCache[allRoutesKey] = {
-        data: resultText,
+        data: formattedArrivals,
         timestamp: now,
       };
 
-      // 마지막 갱신 시간 업데이트
-      setLastRefreshed(new Date());
+      // 현재 시간을 YYYY-MM-DD HH:MM 형식으로 저장
+      const updateTime = new Date();
+      const formattedDate = `${updateTime.getFullYear()}-${String(
+        updateTime.getMonth() + 1
+      ).padStart(2, "0")}-${String(updateTime.getDate()).padStart(
+        2,
+        "0"
+      )} ${String(updateTime.getHours()).padStart(2, "0")}:${String(
+        updateTime.getMinutes()
+      ).padStart(2, "0")}`;
+
+      setLastUpdate(formattedDate);
     } catch (error) {
       console.error("도착정보 조회 오류:", error);
-      setArrivalText("도착정보 조회 오류가 발생했습니다.");
+      setArrivalInfo([]);
     } finally {
       setLoading(false);
     }
@@ -222,69 +232,65 @@ const ArrivalInfo: React.FC<ArrivalInfoProps> = ({ stop }) => {
 
   if (!stop) {
     return (
-      <div className="border rounded-lg p-4">
-        <div className="text-gray-500">정류장을 선택해주세요</div>
+      <div className="bg-white rounded-lg shadow-sm p-4 mb-4">
+        <div className="text-gray-500 text-center py-8">
+          정류장을 선택해주세요
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="border rounded-lg p-4">
-      <div className="flex justify-between items-start mb-4">
-        <h2 className="text-xl font-semibold">정류장 정보</h2>
+    <div className="bg-white rounded-lg shadow-sm p-4 mb-4">
+      <div className="flex justify-between items-start mb-3">
+        <div>
+          <h3 className="font-medium text-lg">{stop.bsNm}</h3>
+          {/* <p className="text-sm text-gray-500">정류장 번호: {stop.bsId}</p> */}
+        </div>
         <button
+          className="text-gray-400 p-2"
           onClick={refreshArrivalInfo}
           disabled={loading}
-          className="text-blue-500 hover:text-blue-700 flex items-center text-sm"
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={`mr-1 ${loading ? "animate-spin" : ""}`}
-          >
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-          </svg>
-          갱신
+          <i
+            className={`fas ${loading ? "fa-sync fa-spin" : "fa-sync-alt"}`}
+          ></i>
         </button>
       </div>
-      <div className="space-y-2">
-        <div>
-          <span className="font-medium">정류장명:</span> {stop.bsNm}
+
+      {loading && arrivalInfo.length === 0 ? (
+        <div className="flex justify-center items-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
         </div>
-        <div>
-          <span className="font-medium">정류소 ID:</span> {stop.bsId}
-        </div>
-        <div>
-          <span className="font-medium">순서:</span> {stop.seq}
-        </div>
-        <div>
-          <span className="font-medium">위치:</span>
-          <div className="text-sm text-gray-600">
-            <div>위도: {stop.yPos}</div>
-            <div>경도: {stop.xPos}</div>
-          </div>
-        </div>
-        {lastRefreshed && (
-          <div className="text-xs text-gray-500 mt-1">
-            마지막 갱신: {lastRefreshed.toLocaleTimeString()}
-          </div>
-        )}
-      </div>
-      {loading ? (
-        <div className="mt-4 flex items-center justify-center space-x-2">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-          <span className="text-gray-600">도착 정보를 불러오는 중...</span>
+      ) : arrivalInfo.length === 0 ? (
+        <div className="bg-gray-50 p-4 rounded text-center text-gray-500">
+          현재 도착 예정인 버스가 없습니다.
         </div>
       ) : (
-        <DigitalSign arrivalText={arrivalText} />
+        <div className="space-y-2">
+          {arrivalInfo.map((bus, index) => (
+            <div
+              key={index}
+              className="flex justify-between items-center bg-gray-50 p-3 rounded"
+            >
+              <div className="flex items-center">
+                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                  <i className="fas fa-bus text-blue-600"></i>
+                </div>
+                <div className="ml-3">
+                  <p className="font-medium">{bus.number}</p>
+                  <p className="text-sm text-gray-500">{bus.location}</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-lg font-medium text-blue-600">
+                  {bus.arrival}
+                </p>
+                <p className="text-xs text-gray-500">도착예정</p>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
