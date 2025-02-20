@@ -1,14 +1,16 @@
 export interface Stop {
-  ID: string;
-  _id: number;
-  geo_x: string;
-  geo_y: string;
-  name: string;
-  stopNo: string;
+  bsId: string;
+  bsNm: string;
+  xPos: string;
+  yPos: string;
+  moveDir: string;
+  seq: string;
+  routeNos?: string[];
 }
 
 export interface BusLine {
-  ID: string;
+  ID: string; 
+  routeNo: string;
   _id: number;
   kind: string;
   name: string;
