@@ -67,11 +67,33 @@ export const DaeguBusAPI = {
 
   getRealtime: async (bsId: string, routeNo: string): Promise<any> => {
     try {
-      return await fetchWithParams(`${DGB_BASE_URL}/getRealtime`, { 
+      const response = await fetchWithParams(`${DGB_BASE_URL}/getRealtime`, { 
         serviceKey: TAGO_KEY, 
         bsId, 
         routeNo 
       });
+  
+      // 응답 데이터 후처리
+      if (response.response?.body?.items?.item) {
+        // 배열이 아닌 경우 배열로 변환
+        const items = Array.isArray(response.response.body.items.item) 
+          ? response.response.body.items.item 
+          : [response.response.body.items.item];
+  
+        // 중복 제거 로직
+        const uniqueItems = items.filter((item: any, index: number, self: any[]) => 
+          index === self.findIndex((t) => (
+            t.ROUTENO === item.ROUTENO && 
+            t.DESTINATION === item.DESTINATION && 
+            t.EXTIME1 === item.EXTIME1
+          ))
+        );
+  
+        // 중복 제거된 아이템으로 응답 재구성
+        response.response.body.items.item = uniqueItems;
+      }
+  
+      return response;
     } catch (error) {
       console.error("getRealtime Error:", error);
       console.error("getRealtime 요청 파라미터:", { serviceKey: TAGO_KEY, bsId, routeNo });
